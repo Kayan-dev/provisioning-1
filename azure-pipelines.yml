@@ -487,44 +487,44 @@ stages:
           rm ~/.ssh/id_rsa
       displayName: Remove private key
 
-  - job: Pull_Run_Docker_Container
-    pool: selfhosted
-    steps:
+#   - job: Pull_Run_Docker_Container
+#     pool: selfhosted
+#     steps:
 
-    - task: Maven@3
-      displayName: 'Build Maven Package'
-      inputs:
-        mavenPomFile: 'pom.xml'
+#     - task: Maven@3
+#       displayName: 'Build Maven Package'
+#       inputs:
+#         mavenPomFile: 'pom.xml'
 
-    - task: CopyFiles@2
-      displayName: 'Copy Files to artifact staging directory'
-      inputs:
-        SourceFolder: '$(System.DefaultWorkingDirectory)'
-        Contents: '**/target/*.?(war|jar)'
-        TargetFolder: $(Pipeline.Workspace)
+#     - task: CopyFiles@2
+#       displayName: 'Copy Files to artifact staging directory'
+#       inputs:
+#         SourceFolder: '$(System.DefaultWorkingDirectory)'
+#         Contents: '**/target/*.?(war|jar)'
+#         TargetFolder: $(Pipeline.Workspace)
 
-    - publish: $(Pipeline.Workspace)
-      artifact: drop
-      displayName: 'Dropping the Artifact'
+#     - publish: $(Pipeline.Workspace)
+#       artifact: drop
+#       displayName: 'Dropping the Artifact'
 
-    # - download: current
-    #   artifact: drop
-    #   displayName: Download Artifact
+#     # - download: current
+#     #   artifact: drop
+#     #   displayName: Download Artifact
 
-    - task: AzureRmWebAppDeployment@4
-      inputs:
-        ConnectionType: 'AzureRM'
-        azureSubscription: 'deploy-petclinic'
-        appType: 'webAppLinux'
-        WebAppName: 'petclinicapp'
-        packageForLinux: '$(Pipeline.Workspace)/drop/target/*.?(war|jar)'
+#     - task: AzureRmWebAppDeployment@4
+#       inputs:
+#         ConnectionType: 'AzureRM'
+#         azureSubscription: 'deploy-petclinic'
+#         appType: 'webAppLinux'
+#         WebAppName: 'petclinicapp'
+#         packageForLinux: '$(Pipeline.Workspace)/drop/target/*.?(war|jar)'
       
-    - task: CmdLine@2
-      displayName: 'Check Deployment'
-      inputs:
-        script: |
-          curl https://petclinicapp.azurewebsites.net/petclinic
-      retryCountOnTaskFailure: 50
+#     - task: CmdLine@2
+#       displayName: 'Check Deployment'
+#       inputs:
+#         script: |
+#           curl https://petclinicapp.azurewebsites.net/petclinic
+#       retryCountOnTaskFailure: 50
 
 
 
