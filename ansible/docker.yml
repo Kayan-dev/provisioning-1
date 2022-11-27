@@ -1,0 +1,113 @@
+---
+- name: Install docker
+  gather_facts: No
+  hosts: all
+  become: yes
+  vars:
+    container_count: 4
+    default_container_name: docker
+    default_container_image: efekaya/dockerhub:latest
+    default_container_command: sleep 1
+
+  tasks:
+    # - name: Install thin-provisioning-tools
+    #   apt:
+    #     name: thin-provisioning-tools
+    #     state: latest
+
+    - name: Install lvm2
+      apt:
+        name: lvm2
+        state: latest
+    
+    - name: Install aptitude
+      apt:
+        name: aptitude
+        state: latest
+        update_cache: true
+
+    - name: Install required system packages
+      apt:
+        pkg:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - python3-pip
+          - virtualenv
+          - python3-setuptools
+          - python-pip
+        state: latest
+        update_cache: true
+
+    - name: Add Docker GPG apt Key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker Repository
+      apt_repository:
+        repo: deb https://download.docker.com/linux/ubuntu focal stable
+        state: present
+
+    - name: Update apt and install docker-ce
+      apt:
+        name: docker-ce
+        state: latest
+        update_cache: true
+
+    - name: Install Python
+      package:
+        name: "python3"
+        state: present
+
+    - name: Install prerequisites for docker-compose
+      apt:
+        name: ['python3-pip', 'python3-setuptools', 'virtualenv']
+
+    - name: Install Docker sdk for python
+      pip:
+        name: docker   
+
+    - name: Install Docker
+      package:
+        name: docker-ce
+        state: latest
+      become: yes
+
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      become: yes
+
+   # - name: Pull an image
+    - community.docker.docker_image:
+        name: efekaya/dockerhub:latest
+        source: pull
+        # Select platform for pulling. If not specified, will pull whatever docker prefers.
+        pull:
+          platform: amd64
+
+ #   - name: Stop a container
+    - community.docker.docker_container:
+        name: pet-cont-priv
+        image: efekaya/dockerhub:latest
+        state: stopped
+
+   # - name: Remove container
+    - community.docker.docker_container:
+        name: pet-cont-priv
+        image: efekaya/dockerhub:latest
+        state: absent
+
+  #  - name: Start a container
+    - community.docker.docker_container:
+        name: pet-cont-priv
+        image: efekaya/dockerhub:latest
+        state: started
+        links:
+        ports:
+          - "8080:8080"
+

@@ -1,0 +1,30 @@
+stages:
+- clean
+- prepare
+
+maven-clean:
+  stage: clean
+  script: 
+    - mvn release:clean
+
+maven-prepare:
+  stage: prepare
+  script:
+    - git checkout -B master
+    - eval $(ssh-agent -s)
+    - ssh-add <(echo "$SSH_PRIVATE_KEY")
+    - mkdir -p ~/.ssh
+    - ssh-keyscan -t rsa 127.0.0.1 >> ~/.ssh/known_hosts
+    - mvn release:prepare -DscmCommentPrefix="[skip ci]" 
+    - mvn release:perform
+
+# maven-perform:
+#   stage: perform
+#   script:
+#     - git checkout -B master
+#     - eval $(ssh-agent -s)
+#     - ssh-add <(echo "$SSH_PRIVATE_KEY")
+#     - mkdir -p ~/.ssh
+#     - ssh-keyscan -t rsa 127.0.0.1 >> ~/.ssh/known_hosts
+#     - ssh -T 127.0.0.1
+#     - mvn -X -DconnectionUrl=scm:git:git@127.0.0.1:gitlab_kaya/gitlab-petclinic.git -DskipTests -Darguments=-DskipTests release:perform 

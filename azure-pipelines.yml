@@ -1,0 +1,536 @@
+# Build your Java project and run tests with Apache Maven.
+
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/java
+
+trigger:
+  branches:
+    include:
+    - master
+
+stages:
+- stage : TEST
+  jobs:
+  - job: TERRAFORM
+
+    displayName: Installing Terraform and Running the code
+    pool: selfhosted
+    continueOnError: true
+
+    steps:       
+    - task: charleszipp.azure-pipelines-tasks-terraform.azure-pipelines-tasks-terraform-installer.TerraformInstaller@0
+      displayName: 'Install latest Terraform'
+
+    - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV3@3
+      displayName: 'Terraform : Init'
+      inputs:
+        commandOptions: '-reconfigure'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/'
+        backendServiceArm: 'Azure Play'
+        backendAzureRmResourceGroupName: 'pers-efe_kaya-rg'
+        backendAzureRmStorageAccountName: storageprovision
+        backendAzureRmContainerName: terrastate
+        backendAzureRmKey: terraform.tfstate
+  
+    - task: TerraformTaskV2@2
+      displayName: 'Terraform: Validate'
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+
+    - task: TerraformTaskV2@2
+      displayName: 'Terraform: Plan'
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        commandOptions: '-refresh-only'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+        environmentServiceNameAzureRM: 'Azure Play'
+
+    - task: TerraformTaskV2@2
+      displayName: 'Terraform: Apply'
+      inputs:
+        provider: 'azurerm'
+        command: 'apply'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+        environmentServiceNameAzureRM: 'Azure Play'
+
+    - task: CmdLine@2
+      inputs:
+        script: |
+          terraform output -raw public_ip_address > ../public_ip
+          terraform output -raw public_ip_address >> ../ansible/hosts
+          terraform output -raw tls_private_key > ~/.ssh/id_rsa
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/'
+      displayName: 'Output ssh key & IP'
+
+    - script: |
+        echo HOSTS file
+        cat ansible/hosts
+      displayName: 'Some Checks'
+
+    - bash: |
+          ip=$(terraform output -raw public_ip_address)
+          echo "##vso[task.setvariable variable=PUB_IP]$ip"
+      workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/'
+      displayName: VARIABLE CHECK
+    - bash: echo $(PUB_IP)
+      displayName: PRINT PUBLIC IP
+      
+    - task: Maven@3
+      displayName: 'Maven Package: WAR file build'
+      inputs:
+        mavenPomFile: 'pom.xml'
+
+    - task: CopyFiles@2
+      displayName: 'Copy Files to artifact staging directory'
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)'
+        Contents: '**/target/*.?(war|jar)'
+        TargetFolder: $(Build.ArtifactStagingDirectory)
+
+    - publish: $(Build.ArtifactStagingDirectory)
+      artifact: drop
+      displayName: 'Dropping the Artifact'
+
+    - task: DockerInstaller@0
+      displayName: 'Install Docker 17.09.0-ce'
+
+    - script: |
+        sudo chmod 666 /var/run/docker.sock
+        docker run hello-world
+      displayName: 'Docker Checks'
+    
+    - task: Docker@2
+      displayName: 'Build & Push to Dockerhub'
+      inputs:
+        containerRegistry: 'Dockerhub'
+        repository: efekaya/dockerhub
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
+        buildContext: '$(Pipeline.Workspace)'
+        tags: 'pipeline'
+
+    - task: CmdLine@2
+      inputs:
+        script: |
+          chmod 400 ~/.ssh/id_rsa
+          ansible-playbook -i hosts docker.yml --ssh-common-args='-o StrictHostKeyChecking=no' --extra-vars "user=azureuser"
+        workingDirectory: '$(Build.SourcesDirectory)/ansible'
+      continueOnError: true  
+      displayName: Running Ansible-Playbook
+
+    - task: TerraformTaskV2@2
+      displayName: 'Target Destruct NIC'
+      inputs:
+        provider: 'azurerm'
+        command: 'destroy'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+        commandOptions: '-target azurerm_network_interface_security_group_association.pet_nic_sga'
+        environmentServiceNameAzureRM: 'Azure Play'
+        continueOnError: true 
+
+    - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV3@3
+      displayName: 'Terraform : Destroy VM'
+      inputs:
+        command: destroy
+        environmentServiceNameAzureRM: 'Azure Play'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+
+    - task: CmdLine@2
+      inputs:
+        script: |
+          echo 'rm private key via ~/.ssh/'
+          rm ~/.ssh/id_rsa
+      displayName: Remove private key
+
+- stage: Running_Load_Test
+  displayName: 'ACCEPTANCE'
+  jobs:
+  - job: RunSelenium
+    displayName: Installing Terraform and Running the code
+    pool: selfhosted
+    steps:       
+    - task: charleszipp.azure-pipelines-tasks-terraform.azure-pipelines-tasks-terraform-installer.TerraformInstaller@0
+      displayName: 'Install latest Terraform'
+
+    - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV3@3
+      displayName: 'Terraform : Init'
+      inputs:
+        commandOptions: '-reconfigure'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/'
+        backendServiceArm: 'Azure Play'
+        backendAzureRmResourceGroupName: 'pers-efe_kaya-rg'
+        backendAzureRmStorageAccountName: storageprovision
+        backendAzureRmContainerName: terrastate
+        backendAzureRmKey: terraform.tfstate
+  
+    - task: TerraformTaskV2@2
+      displayName: 'Terraform: Validate'
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+
+    - task: TerraformTaskV2@2
+      displayName: 'Terraform: Plan'
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        commandOptions: '-refresh-only'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+        environmentServiceNameAzureRM: 'Azure Play'
+
+    - task: TerraformTaskV2@2
+      displayName: 'Terraform: Apply'
+      inputs:
+        provider: 'azurerm'
+        command: 'apply'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+        environmentServiceNameAzureRM: 'Azure Play'
+
+    - task: CmdLine@2
+      inputs:
+        script: |
+          terraform output -raw public_ip_address > ../public_ip
+          terraform output -raw public_ip_address >> ../ansible/hosts
+          terraform output -raw tls_private_key > ~/.ssh/id_rsa
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/'
+      displayName: 'Output ssh key & IP'
+    
+    - bash: |
+          ip=$(terraform output -raw public_ip_address)
+          echo "##vso[task.setvariable variable=PUB_IP]$ip"
+      workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/'
+      displayName: VARIABLE CHECK
+
+    - bash: echo $(PUB_IP)
+      displayName: PRINT PUBLIC IP
+
+    - task: CmdLine@2
+      displayName: Running Ansible-Playbook
+      inputs:
+        script: |
+          chmod 400 ~/.ssh/id_rsa
+          ansible-playbook -i hosts docker.yml --ssh-common-args='-o StrictHostKeyChecking=no' --extra-vars "user=azureuser"
+        workingDirectory: '$(Build.SourcesDirectory)/ansible'
+      continueOnError: true  
+ 
+    - script: |
+        sudo chmod 666 /var/run/docker.sock
+        docker run hello-world
+      displayName: 'Perform Docker Checks'
+
+    - script: python3 -m pip install --upgrade pip && pip --version
+      displayName: 'Install/upgrade pip'
+
+    - script: python3 -m pip install seleniumbase
+      displayName: 'Install Seleniumbase'
+
+    - script: |
+        sudo apt install google-chrome-stable
+      displayName: 'Install Chrome'
+
+    - script: |
+        seleniumbase install chromedriver latest
+      displayName: 'Install Chromedriver'
+
+    - script: |
+        echo "def test_1(): pass" > nothing.py
+        pytest nothing.py
+      displayName: 'Pytest Control'
+
+    - task: CmdLine@2
+      inputs:
+        script: |
+          pip install webdriver-manager
+      displayName: 'Install Webdriver'
+
+    - script: |
+        python3 -m pytest test_provision.py 
+      displayName: 'Run Selenium (pytest)'
+
+    - task: AlexandreGattiker.jmeter-tasks.custom-jmeter-installer-task.JMeterInstaller@0
+      displayName: 'Install JMeter 5.5'
+      inputs:
+        jmeterVersion: 5.5
+        
+    - task: TaurusInstaller@0
+      displayName: Install Taurus
+      inputs:
+        taurusVersion: '1.15.3'
+        pythonCommand: 'python3'
+
+    - task: TaurusRunner@0
+      inputs:
+        taurusConfig: |
+          execution:
+          - scenario:
+              requests:
+              - http://$(PUB_IP):8080/petclinic/
+              - http://$(PUB_IP):8080/petclinic/owners
+              - http://$(PUB_IP):8080/petclinic/oups
+              - http://$(PUB_IP):8080/petclinic/vets
+              # You can also reference a JMeter test plan (recommended)
+              # - script: petclinic-user.jmx
+            concurrency: 5
+            iterations: 10
+            ramp-up: 2s
+          
+          reporting:
+          - module: junit-xml
+        filename: taurus-output/TEST-Taurus.xml
+        jmeterHome: '$(JMeterInstaller.JMeterHome)'
+        jmeterPath: '$(JMeterInstaller.JMeterPath)'
+        jmeterVersion: '$(JMeterInstaller.JMeterVersion)'
+        outputDir: 'taurus-output'
+
+    - task: CmdLine@2
+      displayName: 'Run JMeter'
+      inputs:
+        script: |
+          jmeter -Jjmeter.reportgenerator.overall_granularity=1000 -n -t provision.jmx -l results/results.jtl -j results/output.log -e -o report
+        workingDirectory: $(Build.SourcesDirectory)
+        condition: succeededOrFailed()
+    
+    - script: |
+        JMETER_RESULTS=taurous-output/results.jtl
+        JUNIT_RESULTS=output.xml
+        echo "SYSTEM FOLDER" $(System.DefaultWorkingDirectory)
+        python3 jtl_junit_converter.py $JMETER_RESULTS $JUNIT_RESULTS
+      displayName: 'RESULTS: Convert JMeter Results to JUnit Format'
+
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'output.xml'
+        failTaskOnFailedTests: true
+      displayName: 'RESULTS: Publish Test Coverage'
+
+    - publish: $(System.DefaultWorkingDirectory)/taurus-output
+      artifact: jmeter-results
+      condition: succeededOrFailed()
+      displayName: 'RESULTS: Publish Load Test Artifacts'
+      
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish JMeter HTML Report'
+      condition: succeededOrFailed()
+      inputs:
+        targetPath: report
+        artifact: jmeter-report
+
+    - task: TerraformTaskV2@2
+      displayName: 'Target Destruct NIC'
+      inputs:
+        provider: 'azurerm'
+        command: 'destroy'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+        commandOptions: '-target azurerm_network_interface_security_group_association.pet_nic_sga'
+        environmentServiceNameAzureRM: 'Azure Play'
+
+    - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV3@3
+      displayName: 'Terraform : Destroy VM'
+      inputs:
+        command: destroy
+        environmentServiceNameAzureRM: 'Azure Play'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+
+    - task: CmdLine@2
+      displayName: RM private key
+      inputs:
+        script: |
+          echo 'rm private key via ~/.ssh/'
+          rm ~/.ssh/id_rsa
+      continueOnError: true 
+
+- stage: Deploy_WebApp
+  displayName: 'PROD'
+  jobs:
+  - job: TERRAFORM
+    displayName: Installing Terraform and Running the code
+    pool: selfhosted
+    continueOnError: true
+  
+    steps:       
+    - task: charleszipp.azure-pipelines-tasks-terraform.azure-pipelines-tasks-terraform-installer.TerraformInstaller@0
+      displayName: 'Install latest Terraform'
+
+    - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV3@3
+      displayName: 'Terraform : Init'
+      inputs:
+        commandOptions: '-reconfigure'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/'
+        backendServiceArm: 'Azure Play'
+        backendAzureRmResourceGroupName: 'pers-efe_kaya-rg'
+        backendAzureRmStorageAccountName: storageprovision
+        backendAzureRmContainerName: terrastate
+        backendAzureRmKey: terraform.tfstate
+  
+    - task: TerraformTaskV2@2
+      displayName: 'Terraform: Validate'
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+
+    - task: TerraformTaskV2@2
+      displayName: 'Terraform: Plan'
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        commandOptions: '-refresh-only'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+        environmentServiceNameAzureRM: 'Azure Play'
+
+    - task: TerraformTaskV2@2
+      displayName: 'Terraform: Apply'
+      inputs:
+        provider: 'azurerm'
+        command: 'apply'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+        environmentServiceNameAzureRM: 'Azure Play'
+
+    - task: CmdLine@2
+      inputs:
+        script: |
+          terraform output -raw public_ip_address > ../public_ip
+          terraform output -raw public_ip_address >> ../ansible/hosts
+          terraform output -raw tls_private_key > ~/.ssh/id_rsa
+        workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/'
+      displayName: 'Output ssh key & IP'
+
+    - script: |
+        echo HOSTS file
+        cat ansible/hosts
+      displayName: 'Some Checks'
+
+    - bash: |
+          ip=$(terraform output -raw public_ip_address)
+          echo "##vso[task.setvariable variable=PUB_IP]$ip"
+      workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/'
+      displayName: VARIABLE CHECK
+    - bash: echo $(PUB_IP)
+      displayName: PRINT PUBLIC IP
+      
+    # - task: Maven@3
+    #   displayName: 'Maven Package: WAR file build'
+    #   inputs:
+    #     mavenPomFile: 'pom.xml'
+
+    - task: CopyFiles@2
+      displayName: 'Copy Files to artifact staging directory'
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)'
+        Contents: '**/target/*.?(war|jar)'
+        TargetFolder: $(Build.ArtifactStagingDirectory)
+
+    # - publish: $(Build.ArtifactStagingDirectory)
+    #   artifact: drop
+    #   displayName: 'Dropping the Artifact'
+
+    - task: DockerInstaller@0
+      displayName: 'Install Docker 17.09.0-ce'
+
+    - script: |
+        sudo chmod 666 /var/run/docker.sock
+        docker run hello-world
+      displayName: 'Docker Checks'
+    
+    - task: Docker@2
+      displayName: 'Build & Push to Dockerhub'
+      inputs:
+        containerRegistry: 'Dockerhub'
+        repository: efekaya/dockerhub
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
+        buildContext: '$(Pipeline.Workspace)'
+        tags: 'pipeline'
+
+    - task: CmdLine@2
+      inputs:
+        script: |
+          chmod 400 ~/.ssh/id_rsa
+          ansible-playbook -i hosts docker.yml --ssh-common-args='-o StrictHostKeyChecking=no' --extra-vars "user=azureuser"
+        workingDirectory: '$(Build.SourcesDirectory)/ansible'
+      continueOnError: true  
+      displayName: Running Ansible-Playbook
+
+    - task: CmdLine@2
+      displayName: 'Check Deployment'
+      inputs:
+        script: |
+          curl http://$(PUB_IP):8080/petclinic/
+      retryCountOnTaskFailure: 50
+
+    - task: TerraformTaskV2@2
+      displayName: 'Target Destruct NIC'
+      inputs:
+        provider: 'azurerm'
+        command: 'destroy'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+        commandOptions: '-target azurerm_network_interface_security_group_association.pet_nic_sga'
+        environmentServiceNameAzureRM: 'Azure Play'
+        continueOnError: true 
+
+    - task: ms-devlabs.custom-terraform-tasks.custom-terraform-release-task.TerraformTaskV3@3
+      displayName: 'Terraform : Destroy VM'
+      inputs:
+        command: destroy
+        environmentServiceNameAzureRM: 'Azure Play'
+        workingDirectory: '$(Build.SourcesDirectory)/terraform/' 
+
+    - task: CmdLine@2
+      inputs:
+        script: |
+          echo 'rm private key via ~/.ssh/'
+          rm ~/.ssh/id_rsa
+      displayName: Remove private key
+
+  - job: Pull_Run_Docker_Container
+    pool: selfhosted
+    steps:
+
+    - task: Maven@3
+      displayName: 'Build Maven Package'
+      inputs:
+        mavenPomFile: 'pom.xml'
+
+    - task: CopyFiles@2
+      displayName: 'Copy Files to artifact staging directory'
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)'
+        Contents: '**/target/*.?(war|jar)'
+        TargetFolder: $(Pipeline.Workspace)
+
+    - publish: $(Pipeline.Workspace)
+      artifact: drop
+      displayName: 'Dropping the Artifact'
+
+    # - download: current
+    #   artifact: drop
+    #   displayName: Download Artifact
+
+    - task: AzureRmWebAppDeployment@4
+      inputs:
+        ConnectionType: 'AzureRM'
+        azureSubscription: 'deploy-petclinic'
+        appType: 'webAppLinux'
+        WebAppName: 'petclinicapp'
+        packageForLinux: '$(Pipeline.Workspace)/drop/target/*.?(war|jar)'
+      
+    - task: CmdLine@2
+      displayName: 'Check Deployment'
+      inputs:
+        script: |
+          curl https://petclinicapp.azurewebsites.net/petclinic
+      retryCountOnTaskFailure: 50
+
+
+
+
+
+
+
+
+

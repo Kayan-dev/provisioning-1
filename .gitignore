@@ -1,0 +1,22 @@
+# Eclipse
+.settings/
+.classpath
+.project
+bin/
+
+# IntelliJ IDEA
+.idea
+*.iml
+
+# Maven
+target/
+
+**/.terraform/*
+**terraform/.terraform/*
+
+*.tfsstate
+*.tfstate.*
+
+*.log
+
+*.tfvars
