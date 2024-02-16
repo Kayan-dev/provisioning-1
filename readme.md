@@ -50,7 +50,7 @@ For MySQL database, it is needed to run with 'MySQL' profile defined in main pom
 ```
 ./mvnw jetty:run-war -P MySQL
 ```
-
+This is a test commmit
 Before do this, would be good to check properties defined in MySQL profile inside pom.xml file.
 
 ```
